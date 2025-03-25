@@ -55,6 +55,7 @@ export default function Home() {
 
     const channel = pusher.subscribe(`game-${game.id}`);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     channel.bind("game-update", (data: any) => {
       if (data.type === "MOVE") {
         setBoard(data.board);

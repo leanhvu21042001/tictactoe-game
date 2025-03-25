@@ -14,6 +14,9 @@ const GameBoard: React.FC<GameBoardProps> = ({
   isMyTurn,
   onCellClick,
 }) => {
+  console.log({
+    currentPlayer,
+  });
   const renderCell = (position: number) => {
     const value = board[position];
 
