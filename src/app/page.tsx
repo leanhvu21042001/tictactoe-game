@@ -6,6 +6,7 @@ import PusherClient from "pusher-js";
 import GameLobby from "@/components/GameLobby";
 import GameBoard from "@/components/GameBoard";
 import GameStatus from "@/components/GameStatus";
+import GameHistory from "@/components/GameHistory";
 import { BoardState } from "@/lib/game-logic";
 
 interface GameState {
@@ -37,6 +38,10 @@ export default function Home() {
   const [winner, setWinner] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Add state for tracking moves
+  const [moves, setMoves] = useState<{ player: number; position: number }[]>(
+    []
+  );
 
   // Determine if it's the current player's turn
   const isPlayer1 = game?.player1Id === playerId;
@@ -58,7 +63,22 @@ export default function Home() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     channel.bind("game-update", (data: any) => {
       if (data.type === "MOVE") {
-        setBoard(data.board);
+        const oldBoard = [...board];
+        const newBoard = data.board;
+
+        // Find the position that changed
+        for (let i = 0; i < oldBoard.length; i++) {
+          if (oldBoard[i] === 0 && newBoard[i] !== 0) {
+            // Add the move to history
+            setMoves((prevMoves) => [
+              ...prevMoves,
+              { player: newBoard[i], position: i },
+            ]);
+            break;
+          }
+        }
+
+        setBoard(newBoard);
 
         if (data.winner !== null) {
           if (data.winner === 0) {
@@ -80,7 +100,7 @@ export default function Home() {
     return () => {
       pusher.unsubscribe(`game-${game.id}`);
     };
-  }, [game?.id, isPlayer1]);
+  }, [game?.id, isPlayer1, board]);
 
   // Update board when game changes
   useEffect(() => {
@@ -93,6 +113,8 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
+      // Reset moves when creating a new game
+      setMoves([]);
       const response = await fetch("/api/game", {
         method: "POST",
         headers: {
@@ -121,6 +143,8 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
+      // Reset moves when joining a game
+      setMoves([]);
       const response = await fetch("/api/game", {
         method: "POST",
         headers: {
@@ -139,7 +163,19 @@ export default function Home() {
 
       const joinedGame = await response.json();
       setGame(joinedGame);
-      setBoard(joinedGame.board.split("").map(Number) as BoardState);
+
+      // Set up the initial board
+      const newBoard = joinedGame.board.split("").map(Number) as BoardState;
+      setBoard(newBoard);
+
+      // Initialize move history from the current board state
+      const moveHistory: { player: number; position: number }[] = [];
+      newBoard.forEach((cell, index) => {
+        if (cell !== 0) {
+          moveHistory.push({ player: cell, position: index });
+        }
+      });
+      setMoves(moveHistory);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error joining game");
     } finally {
@@ -150,6 +186,12 @@ export default function Home() {
   const makeMove = async (position: number) => {
     try {
       if (!game || !isMyTurn) return;
+
+      // Add the move locally first (optimistic update)
+      setMoves((prevMoves) => [
+        ...prevMoves,
+        { player: currentPlayer, position },
+      ]);
 
       setLoading(true);
       setError(null);
@@ -167,6 +209,8 @@ export default function Home() {
       });
 
       if (!response.ok) {
+        // Revert the optimistic update if the move fails
+        setMoves((prevMoves) => prevMoves.slice(0, -1));
         throw new Error("Failed to make move");
       }
 
@@ -184,57 +228,64 @@ export default function Home() {
     setBoard([0, 0, 0, 0, 0, 0, 0, 0, 0]);
     setWinner(null);
     setError(null);
+    setMoves([]);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="p-6 space-y-6">
-          <h1 className="text-3xl font-bold text-center text-gray-800">
+      <div className="max-w-5xl w-full bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="p-6">
+          <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
             Tic Tac Toe
           </h1>
 
           {error && (
-            <div className="bg-red-100 text-red-700 p-3 rounded-md text-center">
+            <div className="bg-red-100 text-red-700 p-3 rounded-md text-center mb-6">
               {error}
-            </div>
-          )}
-
-          {loading && (
-            <div className="text-center p-4">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-              <p className="mt-2 text-gray-600">Loading...</p>
             </div>
           )}
 
           {!game ? (
             <GameLobby onCreateGame={createGame} onJoinGame={joinGame} />
           ) : (
-            <div className="space-y-6">
-              <GameStatus
-                gameId={game.id}
-                status={game.status}
-                winner={winner}
-                isPlayer1={isPlayer1}
-              />
-
-              {game.status === "IN_PROGRESS" && (
-                <GameBoard
-                  board={board}
-                  currentPlayer={currentPlayer}
-                  isMyTurn={isMyTurn}
-                  onCellClick={makeMove}
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="md:w-2/3">
+                <GameStatus
+                  gameId={game.id}
+                  status={game.status}
+                  winner={winner}
+                  isPlayer1={isPlayer1}
                 />
-              )}
 
-              {(game.status === "COMPLETED" || game.status === "DRAW") && (
-                <button
-                  onClick={resetGame}
-                  className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
-                >
-                  Play Again
-                </button>
-              )}
+                {game.status === "IN_PROGRESS" && (
+                  <div className="relative mt-6">
+                    <GameBoard
+                      board={board}
+                      currentPlayer={currentPlayer}
+                      isMyTurn={isMyTurn && !loading}
+                      onCellClick={!loading ? makeMove : () => {}}
+                    />
+                    {loading && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-70">
+                        <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {(game.status === "COMPLETED" || game.status === "DRAW") && (
+                  <button
+                    onClick={resetGame}
+                    className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-colors mt-6"
+                  >
+                    Play Again
+                  </button>
+                )}
+              </div>
+
+              <div className="md:w-1/3 mt-6 md:mt-0">
+                <GameHistory moves={moves} isPlayer1={isPlayer1} />
+              </div>
             </div>
           )}
         </div>
