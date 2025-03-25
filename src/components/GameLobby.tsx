@@ -17,7 +17,7 @@ const GameLobby: React.FC<GameLobbyProps> = ({ onCreateGame, onJoinGame }) => {
 
   return (
     <div className="flex flex-col items-center gap-6 p-8 border rounded-lg shadow-md bg-white">
-      <h2 className="text-2xl font-bold text-center">Tic Tac Toe</h2>
+      <h2 className="text-2xl font-bold text-center">Game Lobby</h2>
 
       <button
         onClick={onCreateGame}
