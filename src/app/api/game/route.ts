@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
 import { BoardState, checkWinner, makeMove } from "@/lib/game-logic";
 import { triggerGameUpdate } from "@/lib/pusher";
-
-const prisma = new PrismaClient();
+import prisma from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
   try {
