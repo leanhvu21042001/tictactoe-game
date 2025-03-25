@@ -8,13 +8,89 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id               String          @id @default(cuid())
+  name             String?
+  email            String?         @unique
+  emailVerified    DateTime?
+  image            String?
+  accounts         Account[]
+  sessions         Session[]
+  games1           Game[]          @relation("Player1Games")
+  games2           Game[]          @relation("Player2Games")
+  wonGames         Game[]          @relation("WonGames")
+  channels         Channel[]       @relation("ChannelMembers")
+  ownedChannels    Channel[]       @relation("ChannelOwner")
+  friends          User[]          @relation("UserFriends")
+  friendOf         User[]          @relation("UserFriends")
+  sentRequests     FriendRequest[] @relation("SentFriendRequests")
+  receivedRequests FriendRequest[] @relation("ReceivedFriendRequests")
+}
+
 model Game {
   id        String   @id @default(cuid())
   board     String   @default("000000000")
   status    String   @default("WAITING")
+  player1   User?    @relation("Player1Games", fields: [player1Id], references: [id])
   player1Id String?
+  player2   User?    @relation("Player2Games", fields: [player2Id], references: [id])
   player2Id String?
+  winner    User?    @relation("WonGames", fields: [winnerId], references: [id])
   winnerId  String?
+  channel   Channel? @relation(fields: [channelId], references: [id])
+  channelId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Channel {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  owner       User     @relation("ChannelOwner", fields: [ownerId], references: [id])
+  ownerId     String
+  members     User[]   @relation("ChannelMembers")
+  games       Game[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model FriendRequest {
+  id        String   @id @default(cuid())
+  fromUser  User     @relation("SentFriendRequests", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId    String
+  toUser    User     @relation("ReceivedFriendRequests", fields: [toId], references: [id], onDelete: Cascade)
+  toId      String
+  status    String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromId, toId])
 }
