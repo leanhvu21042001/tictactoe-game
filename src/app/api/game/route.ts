@@ -1,25 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { BoardState, checkWinner, makeMove } from "@/lib/game-logic";
 import { triggerGameUpdate } from "@/lib/pusher";
 import prisma from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  try {
-    const { action, gameId, playerId, position } = await req.json();
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-    console.log({
-      action,
-      gameId,
-      playerId,
-      position,
-    });
+  try {
+    const { action, gameId, position, channelId } = await req.json();
 
     switch (action) {
       case "CREATE":
         const newGame = await prisma.game.create({
           data: {
-            player1Id: playerId,
+            player1: {
+              connect: { id: session.user.id },
+            },
             status: "WAITING",
+            ...(channelId && {
+              channel: {
+                connect: { id: channelId },
+              },
+            }),
+          },
+          include: {
+            player1: true,
+            player2: true,
+            channel: true,
           },
         });
         return NextResponse.json(newGame);
@@ -28,10 +40,18 @@ export async function POST(req: NextRequest) {
         const game = await prisma.game.update({
           where: { id: gameId },
           data: {
-            player2Id: playerId,
+            player2: {
+              connect: { id: session.user.id },
+            },
             status: "IN_PROGRESS",
           },
+          include: {
+            player1: true,
+            player2: true,
+            channel: true,
+          },
         });
+
         await triggerGameUpdate(gameId, {
           type: "GAME_STARTED",
           game,
@@ -41,6 +61,11 @@ export async function POST(req: NextRequest) {
       case "MOVE":
         const currentGame = await prisma.game.findUnique({
           where: { id: gameId },
+          include: {
+            player1: true,
+            player2: true,
+            channel: true,
+          },
         });
 
         if (!currentGame) {
@@ -50,23 +75,23 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Convert string board to array
-        const board = currentGame.board.split("").map(Number) as BoardState;
-
         // Determine current player (1 or 2)
         const currentPlayer =
-          currentGame.player1Id === playerId
+          currentGame.player1Id === session.user.id
             ? 1
-            : currentGame.player2Id === playerId
+            : currentGame.player2Id === session.user.id
             ? 2
             : null;
 
         if (!currentPlayer) {
           return NextResponse.json(
-            { error: "Invalid player" },
+            { error: "Not a player in this game" },
             { status: 403 }
           );
         }
+
+        // Convert string board to array
+        const board = currentGame.board.split("").map(Number) as BoardState;
 
         // Make move
         const newBoard = makeMove(board, position, currentPlayer);
@@ -85,12 +110,24 @@ export async function POST(req: NextRequest) {
                   ? "DRAW"
                   : "COMPLETED"
                 : "IN_PROGRESS",
-            winnerId:
-              winner && winner !== 0
-                ? winner === 1
-                  ? currentGame.player1Id
-                  : currentGame.player2Id
-                : null,
+            ...(winner && winner !== 0
+              ? {
+                  winner: {
+                    connect: {
+                      id:
+                        winner === 1
+                          ? currentGame.player1Id
+                          : currentGame.player2Id,
+                    },
+                  },
+                }
+              : {}),
+          },
+          include: {
+            player1: true,
+            player2: true,
+            winner: true,
+            channel: true,
           },
         });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import PusherClient from "pusher-js";
@@ -7,6 +8,8 @@ import GameLobby from "@/components/GameLobby";
 import GameBoard from "@/components/GameBoard";
 import GameStatus from "@/components/GameStatus";
 import GameHistory from "@/components/GameHistory";
+import ChannelList from "@/components/ChannelList";
+import FriendsList from "@/components/FriendsList";
 import { BoardState } from "@/lib/game-logic";
 
 interface GameState {
@@ -19,39 +22,24 @@ interface GameState {
 }
 
 export default function Home() {
-  const [playerId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      // Generate a unique ID for the player
-      const storedId = localStorage.getItem("ticTacToePlayerId");
-      if (storedId) return storedId;
-      const newId = uuidv4();
-      localStorage.setItem("ticTacToePlayerId", newId);
-      return newId;
-    }
-
-    // Return a temporary ID for server-side rendering
-    return "temp-id";
-  });
-
+  const { data: session, status } = useSession();
   const [game, setGame] = useState<GameState | null>(null);
   const [board, setBoard] = useState<BoardState>([0, 0, 0, 0, 0, 0, 0, 0, 0]);
   const [winner, setWinner] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  // Add state for tracking moves
   const [moves, setMoves] = useState<{ player: number; position: number }[]>(
     []
   );
 
   // Determine if it's the current player's turn
-  const isPlayer1 = game?.player1Id === playerId;
+  const isPlayer1 = game?.player1Id === session?.user?.id;
   const currentPlayer =
     board.filter((cell) => cell !== 0).length % 2 === 0 ? 1 : 2;
   const isMyTurn =
     (isPlayer1 && currentPlayer === 1) || (!isPlayer1 && currentPlayer === 2);
 
   useEffect(() => {
-    // Initialize Pusher if we have a game
     if (!game?.id) return;
 
     const pusher = new PusherClient(process.env.NEXT_PUBLIC_PUSHER_KEY || "", {
@@ -59,17 +47,13 @@ export default function Home() {
     });
 
     const channel = pusher.subscribe(`game-${game.id}`);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     channel.bind("game-update", (data: any) => {
       if (data.type === "MOVE") {
         const oldBoard = [...board];
         const newBoard = data.board;
 
-        // Find the position that changed
         for (let i = 0; i < oldBoard.length; i++) {
           if (oldBoard[i] === 0 && newBoard[i] !== 0) {
-            // Add the move to history
             setMoves((prevMoves) => [
               ...prevMoves,
               { player: newBoard[i], position: i },
@@ -102,7 +86,6 @@ export default function Home() {
     };
   }, [game?.id, isPlayer1, board]);
 
-  // Update board when game changes
   useEffect(() => {
     if (game?.board) {
       setBoard(game.board.split("").map(Number) as BoardState);
@@ -113,7 +96,6 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
-      // Reset moves when creating a new game
       setMoves([]);
       const response = await fetch("/api/game", {
         method: "POST",
@@ -122,7 +104,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           action: "CREATE",
-          playerId,
+          playerId: session?.user?.id,
         }),
       });
 
@@ -143,7 +125,6 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
-      // Reset moves when joining a game
       setMoves([]);
       const response = await fetch("/api/game", {
         method: "POST",
@@ -153,7 +134,7 @@ export default function Home() {
         body: JSON.stringify({
           action: "JOIN",
           gameId,
-          playerId,
+          playerId: session?.user?.id,
         }),
       });
 
@@ -164,11 +145,9 @@ export default function Home() {
       const joinedGame = await response.json();
       setGame(joinedGame);
 
-      // Set up the initial board
       const newBoard = joinedGame.board.split("").map(Number) as BoardState;
       setBoard(newBoard);
 
-      // Initialize move history from the current board state
       const moveHistory: { player: number; position: number }[] = [];
       newBoard.forEach((cell, index) => {
         if (cell !== 0) {
@@ -185,9 +164,8 @@ export default function Home() {
 
   const makeMove = async (position: number) => {
     try {
-      if (!game || !isMyTurn) return;
+      if (!game || !isMyTurn || !session?.user?.id) return;
 
-      // Add the move locally first (optimistic update)
       setMoves((prevMoves) => [
         ...prevMoves,
         { player: currentPlayer, position },
@@ -203,13 +181,12 @@ export default function Home() {
         body: JSON.stringify({
           action: "MOVE",
           gameId: game.id,
-          playerId,
+          playerId: session.user.id,
           position,
         }),
       });
 
       if (!response.ok) {
-        // Revert the optimistic update if the move fails
         setMoves((prevMoves) => prevMoves.slice(0, -1));
         throw new Error("Failed to make move");
       }
@@ -231,25 +208,62 @@ export default function Home() {
     setMoves([]);
   };
 
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold mb-4">Welcome to Tic Tac Toe!</h1>
+          <p className="text-gray-600 mb-8">Please sign in to play</p>
+          <a
+            href="/auth/signin"
+            className="bg-blue-500 text-white px-6 py-3 rounded-md hover:bg-blue-600 transition-colors"
+          >
+            Sign In
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-50">
-      <div className="max-w-5xl w-full bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="p-6">
-          <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
-            Tic Tac Toe
-          </h1>
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex items-center justify-between">
+          <h1 className="text-2xl font-bold">Tic Tac Toe</h1>
+          <div className="flex items-center gap-4">
+            {session.user?.image && (
+              <img
+                src={session.user.image}
+                alt={session.user.name || "User"}
+                className="w-8 h-8 rounded-full"
+              />
+            )}
+            <span>{session.user?.name}</span>
+            <a
+              href="/api/auth/signout"
+              className="text-sm text-gray-600 hover:text-gray-900"
+            >
+              Sign Out
+            </a>
+          </div>
+        </div>
+      </header>
 
-          {error && (
-            <div className="bg-red-100 text-red-700 p-3 rounded-md text-center mb-6">
-              {error}
-            </div>
-          )}
-
-          {!game ? (
-            <GameLobby onCreateGame={createGame} onJoinGame={joinGame} />
-          ) : (
-            <div className="flex flex-col md:flex-row gap-6">
-              <div className="md:w-2/3">
+      <main className="flex-grow container mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="md:col-span-2">
+            {!game ? (
+              <GameLobby onCreateGame={createGame} onJoinGame={joinGame} />
+            ) : (
+              <div className="space-y-6">
                 <GameStatus
                   gameId={game.id}
                   status={game.status}
@@ -258,7 +272,7 @@ export default function Home() {
                 />
 
                 {game.status === "IN_PROGRESS" && (
-                  <div className="relative mt-6">
+                  <div className="relative">
                     <GameBoard
                       board={board}
                       currentPlayer={currentPlayer}
@@ -273,23 +287,31 @@ export default function Home() {
                   </div>
                 )}
 
+                {error && (
+                  <div className="bg-red-100 text-red-700 p-3 rounded-md text-center">
+                    {error}
+                  </div>
+                )}
+
                 {(game.status === "COMPLETED" || game.status === "DRAW") && (
                   <button
                     onClick={resetGame}
-                    className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-colors mt-6"
+                    className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
                   >
                     Play Again
                   </button>
                 )}
               </div>
+            )}
+          </div>
 
-              <div className="md:w-1/3 mt-6 md:mt-0">
-                <GameHistory moves={moves} isPlayer1={isPlayer1} />
-              </div>
-            </div>
-          )}
+          <div className="space-y-8">
+            <ChannelList />
+            <FriendsList />
+            {game && <GameHistory moves={moves} isPlayer1={isPlayer1} />}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
